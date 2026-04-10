@@ -1,0 +1,26 @@
+services:
+  rag:
+    build: ./services/rag
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+    volumes:
+      - ./data/faiss_indices:/app/indices
+      - ./data/history:/app/history
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  bot_core:
+    build: ./bot_core
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      rag:
+        condition: service_started
+    volumes:
+      - ./bot_core/personas:/app/personas
+      - ./data:/app/data

@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node / Bun
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Runtime data
+data/history/*.db
+data/history/*.db-*
+data/history/*.sqlite
+data/history/*.sqlite3
+data/faiss_indices/*
+!data/faiss_indices/.gitkeep
+!data/history/.gitkeep
