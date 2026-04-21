@@ -8,6 +8,7 @@ import {
 import { Routes } from "discord-api-types/v10"
 import type { Persona } from "./persona-manager.ts"
 import { Orchestrator } from "./orchestrator.ts"
+import type { ChatAttachment } from "./llm/types.ts"
 
 const TYPING_INTERVAL_MS = 5_000
 const MAX_MESSAGE_LENGTH = 2000
@@ -25,6 +26,14 @@ interface RawMention {
   id: string
 }
 
+interface RawAttachment {
+  url?: string
+  proxy_url?: string
+  filename?: string
+  content_type?: string | null
+  size?: number
+}
+
 interface RawMessageCreatePacket {
   t?: string
   d?: {
@@ -35,6 +44,7 @@ interface RawMessageCreatePacket {
     webhook_id?: string
     author?: RawAuthor
     mentions?: RawMention[]
+    attachments?: RawAttachment[]
   }
 }
 
@@ -186,6 +196,38 @@ async function sendResponseByRest(
   }
 }
 
+function normalizeRawAttachments(attachments: RawAttachment[] | undefined): ChatAttachment[] {
+  if (!Array.isArray(attachments)) return []
+
+  return attachments.flatMap((attachment) => {
+    const url = typeof attachment.url === "string" ? attachment.url : ""
+    const filename = typeof attachment.filename === "string" ? attachment.filename : ""
+    if (!url || !filename) return []
+
+    return [{
+      url,
+      proxyUrl: typeof attachment.proxy_url === "string" ? attachment.proxy_url : null,
+      filename,
+      mimeType: typeof attachment.content_type === "string" ? attachment.content_type : null,
+      size: typeof attachment.size === "number" ? attachment.size : undefined,
+    }]
+  })
+}
+
+function normalizeMessageAttachments(msg: Message): ChatAttachment[] {
+  return [...msg.attachments.values()].flatMap((attachment) => {
+    if (!attachment.url || !attachment.name) return []
+
+    return [{
+      url: attachment.url,
+      proxyUrl: attachment.proxyURL,
+      filename: attachment.name,
+      mimeType: attachment.contentType,
+      size: attachment.size,
+    }]
+  })
+}
+
 export function createClientForPersona(
   persona: Persona,
   token: string,
@@ -216,13 +258,14 @@ export function createClientForPersona(
     userId: string
     authorTag: string
     userMessage: string
+    attachments: ChatAttachment[]
     isDm: boolean
     message?: Message
   }): Promise<void> {
     if (rememberMessage(input.messageId)) return
 
     console.log(
-      `[${persona.id}] Received ${input.isDm ? "DM" : "mention"} from ${input.authorTag} in channel ${input.channelId}`,
+      `[${persona.id}] Received ${input.isDm ? "DM" : "mention"} from ${input.authorTag} in channel ${input.channelId} (${input.attachments.length} attachments)`,
     )
 
     const abortController = new AbortController()
@@ -237,6 +280,7 @@ export function createClientForPersona(
         input.userId,
         input.userMessage,
         input.guildId,
+        input.attachments,
       )
 
       abortController.abort()
@@ -299,35 +343,6 @@ export function createClientForPersona(
     )
   })
 
-  client.on("raw", async (packet: RawMessageCreatePacket) => {
-    if (packet.t !== "MESSAGE_CREATE") return
-
-    const data = packet.d
-    if (!data?.id || !data.channel_id || !data.author?.id) return
-    if (data.author.bot || data.webhook_id) return
-
-    const isDm = !data.guild_id
-    const botId = client.user?.id ?? ""
-    const isMentioned = Array.isArray(data.mentions)
-      ? data.mentions.some((mention) => mention.id === botId)
-      : false
-
-    if (!isDm && !isMentioned) return
-
-    const userMessage = extractUserMessage(data.content ?? "", isDm)
-    if (!userMessage) return
-
-    await handleIncomingMessage({
-      messageId: data.id,
-      channelId: data.channel_id,
-      guildId: data.guild_id ?? "dm",
-      userId: data.author.id,
-      authorTag: formatAuthorTag(data.author),
-      userMessage,
-      isDm,
-    })
-  })
-
   client.on(Events.MessageCreate, async (msg: Message) => {
     // Bot 自身のメッセージは無視
     if (msg.author.bot) return
@@ -351,8 +366,8 @@ export function createClientForPersona(
     if (!msg.channel.isTextBased()) return
 
     const userMessage = extractUserMessage(msg.content, isDm)
-
-    if (!userMessage) return
+    const attachments = normalizeMessageAttachments(msg)
+    if (!userMessage && attachments.length === 0) return
 
     await handleIncomingMessage({
       messageId: msg.id,
@@ -361,6 +376,7 @@ export function createClientForPersona(
       userId: msg.author.id,
       authorTag: msg.author.tag,
       userMessage,
+      attachments,
       isDm,
       message: msg,
     })

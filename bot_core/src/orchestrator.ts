@@ -4,6 +4,7 @@ import { GeminiProvider } from "./llm/gemini.ts"
 import { OllamaProvider } from "./llm/ollama.ts"
 import { FallbackLLMClient } from "./llm/fallback-client.ts"
 import { ragSearch } from "./services/rag-client.ts"
+import type { ChatAttachment } from "./llm/types.ts"
 
 const HISTORY_LIMIT = 20
 
@@ -34,6 +35,7 @@ export class Orchestrator {
     userId: string,
     userMessage: string,
     guildId = "dm",
+    attachments: ChatAttachment[] = [],
   ): Promise<string> {
     const { persona } = this
 
@@ -64,7 +66,7 @@ export class Orchestrator {
     // 3. 現在のユーザーメッセージを履歴に追加してLLMに渡す
     const messages = [
       ...history,
-      { role: "user" as const, content: userMessage },
+      { role: "user" as const, content: userMessage, attachments },
     ]
 
     // 4. LLM に応答を生成させる
@@ -72,7 +74,7 @@ export class Orchestrator {
     console.log(`[${persona.id}] Response generated via ${llmResponse.provider}`)
 
     // 5. 会話履歴を永続化
-    this.session.appendMessage(channelId, userId, "user", userMessage, guildId)
+    this.session.appendMessage(channelId, userId, "user", userMessage, guildId, attachments)
     this.session.appendMessage(channelId, "bot", "assistant", llmResponse.text, guildId)
 
     return llmResponse.text

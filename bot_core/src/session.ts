@@ -1,13 +1,14 @@
 import { Database } from "bun:sqlite"
 import path from "node:path"
 import fs from "node:fs"
-import type { ChatMessage } from "./llm/types.ts"
+import type { ChatAttachment, ChatMessage } from "./llm/types.ts"
 
 const HISTORY_DIR = process.env.HISTORY_DIR ?? "data/history"
 
 interface MessageRow {
   role: string
   content: string
+  attachments: string
 }
 
 export class SessionManager {
@@ -34,6 +35,15 @@ export class SessionManager {
         created_at INTEGER NOT NULL DEFAULT (unixepoch())
       )
     `)
+    const columns = this.db.query("PRAGMA table_info(messages)").all() as Array<{
+      name?: string
+    }>
+    const hasAttachmentsColumn = columns.some((column) => column.name === "attachments")
+    if (!hasAttachmentsColumn) {
+      this.db.exec(
+        `ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'`,
+      )
+    }
     this.db.exec(
       `CREATE INDEX IF NOT EXISTS idx_channel_created ON messages (channel_id, created_at)`,
     )
@@ -41,8 +51,8 @@ export class SessionManager {
 
   getHistory(channelId: string, limit: number): ChatMessage[] {
     const stmt = this.db.query(`
-      SELECT role, content FROM (
-        SELECT role, content, created_at
+      SELECT role, content, attachments FROM (
+        SELECT role, content, attachments, created_at
         FROM messages
         WHERE channel_id = ?
         ORDER BY created_at DESC
@@ -53,6 +63,7 @@ export class SessionManager {
     return rows.map((row) => ({
       role: row.role as "user" | "assistant",
       content: row.content,
+      attachments: parseAttachments(row.attachments),
     }))
   }
 
@@ -62,12 +73,13 @@ export class SessionManager {
     role: "user" | "assistant",
     content: string,
     guildId = "dm",
+    attachments: ChatAttachment[] = [],
   ): void {
     const stmt = this.db.query(`
-      INSERT INTO messages (guild_id, channel_id, user_id, role, content)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO messages (guild_id, channel_id, user_id, role, content, attachments)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
-    stmt.run(guildId, channelId, userId, role, content)
+    stmt.run(guildId, channelId, userId, role, content, JSON.stringify(attachments))
   }
 
   clearHistory(channelId: string): void {
@@ -78,5 +90,30 @@ export class SessionManager {
 
   close(): void {
     this.db.close()
+  }
+}
+
+function parseAttachments(value: string): ChatAttachment[] {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return []
+
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") return []
+
+      const url = typeof item.url === "string" ? item.url : ""
+      const filename = typeof item.filename === "string" ? item.filename : ""
+      if (!url || !filename) return []
+
+      return [{
+        url,
+        proxyUrl: typeof item.proxyUrl === "string" ? item.proxyUrl : null,
+        filename,
+        mimeType: typeof item.mimeType === "string" ? item.mimeType : null,
+        size: typeof item.size === "number" ? item.size : undefined,
+      }]
+    })
+  } catch {
+    return []
   }
 }

@@ -76,6 +76,8 @@ RAG_SERVICE_URL=http://rag:8002
 ```
 
 > **補足**: `DISCORD_TOKEN_EXAMPLE` の変数名はペルソナ YAML の `token_env` フィールドと一致させる必要があります。ペルソナを追加するたびに対応する変数も追加してください。
+>
+> Discord 添付画像を Ollama にも渡す場合は、`llm.ollama.model` に `gemma3`、`llava`、`qwen2.5vl` などの vision 対応モデルを設定してください。テキスト専用モデルでは画像入力を扱えません。
 
 ### 全環境変数一覧
 
