@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from sentence_transformers import SentenceTransformer
 
 FAISS_SUFFIX = ".faiss"
 META_SUFFIX = ".json"
+ENCODE_BATCH_SIZE = os.environ.get("RAG_ENCODE_BATCH_SIZE", "auto")
+MAX_EMBED_TEXT_CHARS = int(os.environ.get("RAG_MAX_EMBED_TEXT_CHARS", "12000"))
 
 
 class FaissIndexer:
@@ -152,10 +155,34 @@ class FaissIndexer:
             return 0
 
         texts = [str(item["text"]) for item in items]
-        embeddings: np.ndarray = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
-        dim = embeddings.shape[1]
-        index = faiss.IndexFlatL2(dim)
-        index.add(embeddings.astype(np.float32))
+        index: faiss.Index | None = None
+        batch_size = _resolve_encode_batch_size(self.model)
+        device = _model_device(self.model)
+        print(
+            f"[rag] Encoding {len(texts)} items for {index_path} "
+            f"(device={device}, batch_size={batch_size}, max_chars={MAX_EMBED_TEXT_CHARS})",
+            flush=True,
+        )
+        for start in range(0, len(texts), batch_size):
+            batch = [_embedding_text(text) for text in texts[start:start + batch_size]]
+            embeddings: np.ndarray = self.model.encode(
+                batch,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+                batch_size=batch_size,
+            )
+            if index is None:
+                index = faiss.IndexFlatL2(embeddings.shape[1])
+            index.add(embeddings.astype(np.float32))
+            print(
+                f"[rag] Encoded {min(start + batch_size, len(texts))}/{len(texts)} items",
+                flush=True,
+            )
+
+        if index is None:
+            self._save_empty(index_path)
+            return 0
+
         self._save(index, items, index_path)
         return len(items)
 
@@ -200,3 +227,33 @@ def _format_attachments(raw: str) -> str:
         if isinstance(filename, str) and filename:
             names.append(filename)
     return "添付: " + ", ".join(names) if names else ""
+
+
+def _embedding_text(text: str) -> str:
+    if MAX_EMBED_TEXT_CHARS <= 0 or len(text) <= MAX_EMBED_TEXT_CHARS:
+        return text
+    return text[:MAX_EMBED_TEXT_CHARS] + "\n...[embedding text truncated]"
+
+
+def _resolve_encode_batch_size(model: SentenceTransformer) -> int:
+    requested = ENCODE_BATCH_SIZE.strip().lower()
+    if requested != "auto":
+        try:
+            return max(1, int(requested))
+        except ValueError:
+            print(f"[rag] Invalid RAG_ENCODE_BATCH_SIZE={ENCODE_BATCH_SIZE!r}; using auto", flush=True)
+
+    device = _model_device(model)
+    if device == "mps":
+        return 16
+
+    machine = platform.machine().lower()
+    if machine in {"aarch64", "arm64"}:
+        return 2
+
+    return 4
+
+
+def _model_device(model: SentenceTransformer) -> str:
+    device = getattr(model, "device", "cpu")
+    return str(device).split(":", maxsplit=1)[0]

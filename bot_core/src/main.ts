@@ -1,5 +1,10 @@
 import { loadPersonas, resolveToken } from "./persona-manager.ts"
 import { createClientForPersona } from "./gateway.ts"
+import {
+  startRagCollectors,
+  waitForClientReady,
+  type PersonaClientEntry,
+} from "./rag-collector-client.ts"
 
 async function main(): Promise<void> {
   console.log("[main] Starting Discord Bot...")
@@ -31,15 +36,18 @@ async function main(): Promise<void> {
   const results = await Promise.allSettled(
     configuredPersonas.map(async (persona) => {
       const token = resolveToken(persona)
-      createClientForPersona(persona, token)
-      return persona.id
+      const client = createClientForPersona(persona, token)
+      await waitForClientReady(client, persona.id)
+      return { persona, client }
     }),
   )
 
+  const startedEntries: PersonaClientEntry[] = []
   let successCount = 0
   for (const result of results) {
     if (result.status === "fulfilled") {
       successCount++
+      startedEntries.push(result.value)
     } else {
       console.error("[main] Failed to start persona:", result.reason)
     }
@@ -51,6 +59,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`[main] ${successCount}/${configuredPersonas.length} configured persona(s) started successfully.`)
+  await startRagCollectors(startedEntries)
 }
 
 main().catch((error) => {

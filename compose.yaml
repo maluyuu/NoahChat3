@@ -6,6 +6,12 @@ services:
     environment:
       DISCORD_MESSAGE_DB: /app/history/discord_messages.db
       DISCORD_RAG_TIMEZONE: Asia/Tokyo
+      RAG_DEVICE: ${RAG_DEVICE:-auto}
+      RAG_TORCH_NUM_THREADS: ${RAG_TORCH_NUM_THREADS:-auto}
+      RAG_ENCODE_BATCH_SIZE: ${RAG_ENCODE_BATCH_SIZE:-auto}
+      RAG_MAX_EMBED_TEXT_CHARS: ${RAG_MAX_EMBED_TEXT_CHARS:-12000}
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      TOKENIZERS_PARALLELISM: "false"
     restart: unless-stopped
     volumes:
       - ./data/faiss_indices:/app/indices
@@ -27,7 +33,7 @@ services:
     restart: unless-stopped
     depends_on:
       rag:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./bot_core/personas:/app/personas
       - ./data:/app/data

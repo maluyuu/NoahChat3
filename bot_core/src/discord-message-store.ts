@@ -54,6 +54,13 @@ export class DiscordMessageStore {
       CREATE INDEX IF NOT EXISTS idx_discord_messages_guild_unit_day
       ON discord_messages (guild_id, unit_id, created_at)
     `)
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS discord_collection_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      )
+    `)
   }
 
   upsertMany(messages: StoredDiscordMessage[]): number {
@@ -103,7 +110,45 @@ export class DiscordMessageStore {
     return messages.length
   }
 
+  getMessageCount(guildIds: string[] = []): number {
+    if (guildIds.length === 0) return 0
+
+    const placeholders = guildIds.map(() => "?").join(",")
+    const row = this.db.query(`
+      SELECT COUNT(*) AS count FROM discord_messages
+      WHERE guild_id IN (${placeholders})
+    `).get(...guildIds) as {
+      count: number
+    }
+    return row.count
+  }
+
+  getLastSuccessfulUpdateAt(personaId: string): number | null {
+    const row = this.db.query(`
+      SELECT value FROM discord_collection_state
+      WHERE key = ?
+    `).get(stateKey(personaId)) as { value: string } | null
+    if (!row) return null
+
+    const timestamp = Number.parseInt(row.value, 10)
+    return Number.isFinite(timestamp) ? timestamp : null
+  }
+
+  markSuccessfulUpdate(personaId: string, timestamp = Math.floor(Date.now() / 1000)): void {
+    this.db.query(`
+      INSERT INTO discord_collection_state (key, value, updated_at)
+      VALUES (?, ?, unixepoch())
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `).run(stateKey(personaId), String(timestamp))
+  }
+
   close(): void {
     this.db.close()
   }
+}
+
+function stateKey(personaId: string): string {
+  return `last_successful_update_at:${personaId}`
 }

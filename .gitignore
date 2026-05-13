@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.cache/
 
 # Node / Bun
 node_modules/

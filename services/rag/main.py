@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import os
+import platform
 from contextlib import asynccontextmanager
 from typing import Any
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -14,6 +17,8 @@ from retriever import FaissRetriever
 
 MODEL_NAME = "cl-nagoya/ruri-v3-30m"
 CACHE_DIR = os.environ.get("TRANSFORMERS_CACHE", "/app/.cache")
+RAG_DEVICE = os.environ.get("RAG_DEVICE", "auto")
+RAG_TORCH_NUM_THREADS = os.environ.get("RAG_TORCH_NUM_THREADS", "auto")
 DISCORD_MESSAGE_DB = os.environ.get("DISCORD_MESSAGE_DB", "/app/history/discord_messages.db")
 DISCORD_RAG_TIMEZONE = os.environ.get("DISCORD_RAG_TIMEZONE", "Asia/Tokyo")
 
@@ -26,8 +31,16 @@ _retriever: FaissRetriever | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[type-arg]
     global _model, _indexer, _retriever
-    print(f"[rag] Loading embedding model: {MODEL_NAME}")
-    _model = SentenceTransformer(MODEL_NAME, cache_folder=CACHE_DIR)
+    device = resolve_rag_device(RAG_DEVICE)
+    torch_threads = resolve_torch_threads(RAG_TORCH_NUM_THREADS, device)
+    configure_torch_threads(torch_threads)
+    print(
+        f"[rag] Loading embedding model: {MODEL_NAME} "
+        f"(requested_device={RAG_DEVICE}, device={device}, torch_threads={torch_threads})",
+        flush=True,
+    )
+    model_kwargs = {"cache_folder": CACHE_DIR, "device": device}
+    _model = SentenceTransformer(MODEL_NAME, **model_kwargs)
     _indexer = FaissIndexer(_model)
     _retriever = FaissRetriever(_model)
     print("[rag] Model loaded successfully")
@@ -36,6 +49,54 @@ async def lifespan(app: FastAPI):  # type: ignore[type-arg]
 
 
 app = FastAPI(title="RAG Service", lifespan=lifespan)
+
+
+def resolve_rag_device(requested_device: str) -> str:
+    normalized = requested_device.strip().lower()
+    if normalized and normalized != "auto":
+        return normalized
+
+    try:
+        import torch
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception as exc:
+        print(f"[rag] MPS detection failed, falling back to CPU: {exc}", flush=True)
+
+    return "cpu"
+
+
+def resolve_torch_threads(requested_threads: str, device: str) -> int:
+    if requested_threads.strip().lower() != "auto":
+        try:
+            return max(0, int(requested_threads))
+        except ValueError:
+            print(
+                f"[rag] Invalid RAG_TORCH_NUM_THREADS={requested_threads!r}; using auto",
+                flush=True,
+            )
+
+    if device == "mps":
+        return 2
+
+    machine = platform.machine().lower()
+    system = platform.system().lower()
+    cpu_count = os.cpu_count() or 2
+    if system == "linux" and machine in {"aarch64", "arm64"}:
+        return min(2, cpu_count)
+
+    return min(4, cpu_count)
+
+
+def configure_torch_threads(num_threads: int) -> None:
+    if num_threads <= 0:
+        return
+    try:
+        import torch
+        torch.set_num_threads(num_threads)
+        torch.set_num_interop_threads(max(1, min(num_threads, 2)))
+    except Exception as exc:
+        print(f"[rag] Failed to configure torch threads: {exc}", flush=True)
 
 
 def get_indexer() -> FaissIndexer:

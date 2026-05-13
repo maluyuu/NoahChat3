@@ -16,9 +16,27 @@
 
 | ツール | バージョン | 用途 |
 |--------|-----------|------|
-| Docker Desktop (または Docker Engine + Compose v2) | 最新推奨 | コンテナ起動 |
-| Bun | v1.x 以上 | ローカル開発時のみ |
-| Python | 3.12 以上 | ローカル開発時のみ |
+| Bun | v1.x 以上 | ローカル一括起動 / Bot Core |
+| Python | 3.11 以上 | RAG サービス |
+| Docker Desktop (または Docker Engine + Compose v2) | 任意 | Docker Compose 利用時のみ |
+
+### 対応環境
+
+このプロジェクトは NVIDIA GPU と Windows 固有構成を前提にしていません。Apple Silicon Mac と Raspberry Pi 5 8GB RAM では同じ `compose.yaml` を使い、各ホストの native architecture でビルドしてください。
+
+RAG の `RAG_DEVICE=auto` は次のように動きます。
+
+- Apple Silicon Mac のローカルPython実行: PyTorch MPS が利用可能なら `mps`
+- Docker Desktop on Mac: コンテナからMPSを利用できないため `cpu`
+- Raspberry Pi 5: `cpu`、かつCPUスレッド数を控えめに自動調整
+
+Raspberry Pi 5 でメモリが厳しい場合は `.env` で次のように下げてください。
+
+```env
+RAG_TORCH_NUM_THREADS=1
+RAG_ENCODE_BATCH_SIZE=1
+RAG_MAX_EMBED_TEXT_CHARS=6000
+```
 
 ---
 
@@ -63,6 +81,9 @@ cp .env.example .env
 # ペルソナごとの Discord Bot トークン（ペルソナの token_env に合わせた変数名）
 DISCORD_TOKEN_EXAMPLE=your_discord_bot_token_here
 
+# RAG用メッセージ収集専用 Bot トークン（任意）
+DISCORD_RAG_COLLECTOR_TOKEN=your_collector_bot_token_here
+
 # Google Gemini API キー（必須）
 # https://aistudio.google.com/app/apikey から取得
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -84,12 +105,19 @@ RAG_SERVICE_URL=http://rag:8002
 | 変数名 | 必須 | デフォルト | 説明 |
 |--------|------|-----------|------|
 | `DISCORD_TOKEN_<ID>` | ✅ | — | ペルソナの Discord Bot トークン |
+| `DISCORD_RAG_COLLECTOR_TOKEN` | — | — | RAG用メッセージ収集専用 Discord Bot トークン |
 | `GEMINI_API_KEY` | ✅ | — | Google Gemini API キー |
 | `OLLAMA_BASE_URL` | — | `http://localhost:11434` | Ollama サーバーの URL |
 | `RAG_SERVICE_URL` | — | `http://localhost:8002` | RAG サービスの URL |
 | `PERSONAS_DIR` | — | `personas` | ペルソナ YAML ディレクトリのパス |
 | `HISTORY_DIR` | — | `data/history` | 会話履歴 SQLite DB の保存先 |
 | `TRANSFORMERS_CACHE` | — | `/app/.cache` | HuggingFace モデルキャッシュパス（RAG サービス） |
+| `RAG_DEVICE` | — | `auto` | RAG 埋め込みモデルの実行デバイス。MacローカルではMPS、Docker/PiではCPUを自動選択 |
+| `RAG_TORCH_NUM_THREADS` | — | `auto` | RAG のCPUスレッド数 |
+| `RAG_ENCODE_BATCH_SIZE` | — | `auto` | RAG再構築時の埋め込みバッチサイズ。MPSでは大きめ、Pi/CPUでは控えめに自動調整 |
+| `RAG_MAX_EMBED_TEXT_CHARS` | — | `12000` | 1検索単位あたり埋め込みへ渡す最大文字数 |
+| `RAG_INDEX_REBUILD_TIMEOUT_MS` | — | `7200000` | Discord履歴FAISS再構築リクエストのタイムアウト |
+| `RAG_INDEX_REBUILD_ATTEMPTS` | — | `1` | Discord履歴FAISS再構築リクエストの試行回数 |
 
 ---
 
@@ -162,7 +190,24 @@ DISCORD_TOKEN_MYBOT=your_new_bot_token_here
 
 ## 5. 起動方法
 
-### 方法 A: Docker Compose（推奨）
+### 方法 A: ローカル一括起動（推奨 / Docker不要）
+
+リポジトリ直下で次の1コマンドを実行します。初回は Python venv 作成、RAG 依存関係のインストール、`bot_core` の `bun install` も自動で行います。
+
+```bash
+bun run start
+```
+
+このコマンドは以下をまとめて行います。
+
+- `.env` を読み込み
+- RAG サービスを `http://localhost:8002` で起動
+- RAG の healthcheck 完了後に Discord Bot を起動
+- `data/history` と `data/faiss_indices` をリポジトリ直下に統一
+
+停止は `Ctrl+C` です。
+
+### 方法 B: Docker Compose
 
 すべてのサービスを一括起動します。
 
@@ -196,7 +241,7 @@ localhost:8002  ←→  rag         (FastAPI + FAISS)
                 ←→  bot_core    (Discord Bot / TypeScript)
 ```
 
-### 方法 B: ローカル個別起動（開発時）
+### 方法 C: ローカル個別起動（開発時）
 
 RAG サービスと Bot Core を別々のターミナルで起動します。
 
@@ -224,6 +269,12 @@ bun run src/main.ts
 
 RAG（Retrieval-Augmented Generation）を使うと、Bot が独自の知識ベースを参照して回答できます。  
 埋め込みモデルには `cl-nagoya/ruri-v3-30m`（日本語対応）を使用しています。
+
+### Discord履歴の自動収集
+
+`DISCORD_RAG_COLLECTOR_TOKEN` を設定すると、RAG用メッセージ収集専用Botが参加しているサーバーではそのBotが履歴を収集します。収集専用Botが参加していないサーバーでは、そのサーバーに参加している会話用Botがfallbackとして収集します。
+
+検索対象は引き続き各ペルソナの会話用Botが参加しているサーバーだけです。収集専用Botが他のサーバーに参加していても、ペルソナBotが参加していないサーバーの履歴はそのペルソナのRAGインデックスには入りません。
 
 ### テキストを1件追加
 
@@ -297,6 +348,40 @@ docker compose logs bot_core | grep -E "Logged in|Received (DM|mention)"
 
 ```bash
 docker compose logs -f rag
+```
+
+### 8002番ポートが使用中 / 古いRAGを止めたい
+
+ローカル一括起動 (`bun run start`) は、`http://localhost:8002/health` が応答する場合は既存のRAGサービスを再利用します。RAG側のコードや環境変数を変更した後は、8002番ポートで動いている古いRAGプロセスを止めてから再起動してください。
+
+まず使用中のプロセスを確認します。
+
+```bash
+lsof -nP -iTCP:8002 -sTCP:LISTEN
+```
+
+表示された `PID` を指定して停止します。
+
+```bash
+kill <PID>
+```
+
+終了しない場合だけ強制終了します。
+
+```bash
+kill -9 <PID>
+```
+
+Docker Composeで起動したRAGを止める場合は、プロセスを直接killせずComposeで止めます。
+
+```bash
+docker compose stop rag
+```
+
+停止後、ローカル一括起動をやり直します。
+
+```bash
+bun run start
 ```
 
 ### ペルソナが読み込まれない

@@ -51,9 +51,11 @@ TypeScript (Bun) + Python (FastAPI) のマイクロサービス構成で動作�
 
 ### 前提条件
 
-- Docker Desktop (または Docker Engine + Compose v2)
-- Bun v1.x（ローカル開発時）
-- Python 3.12+（ローカル開発時）
+- Bun v1.x
+- Python 3.11+
+- Docker Desktop (または Docker Engine + Compose v2) は任意
+
+NVIDIA GPU と Windows 固有構成は前提にしていません。Apple Silicon Mac と Raspberry Pi 5 8GB RAM は同じ `compose.yaml` でnative buildします。RAG は `RAG_DEVICE=auto` で、MacローカルPython実行ではMPS、Docker Desktop on Mac と Raspberry Pi 5 ではCPUを選択します。
 
 ### 1. 環境変数ファイルを作成
 
@@ -62,7 +64,15 @@ cp .env.example .env
 # .env を編集してトークン・APIキーを設定
 ```
 
-### 2. Docker Compose で起動
+### 2. ローカル一括起動（Docker不要）
+
+```bash
+bun run start
+```
+
+初回は Python venv 作成、RAG 依存関係のインストール、`bot_core` の `bun install` も自動実行します。RAG サービスを `http://localhost:8002` で起動し、healthcheck 後に Bot Core を起動します。
+
+### 3. Docker Compose で起動
 
 ```bash
 # 初回ビルド＆起動（RAG モデルダウンロードに数分かかる場合あり）
@@ -76,7 +86,7 @@ docker compose logs -f bot_core
 docker compose logs -f rag
 ```
 
-### 3. ローカルで個別起動（開発時）
+### 4. ローカルで個別起動（開発時）
 
 ```bash
 # RAG サービス
@@ -97,12 +107,19 @@ bun run src/main.ts
 | 変数名 | 必須 | デフォルト | 説明 |
 |--------|------|-----------|------|
 | `DISCORD_TOKEN_<ID>` | ✅ | — | 各ペルソナの Discord Bot トークン（ペルソナ YAML の `token_env` で参照） |
+| `DISCORD_RAG_COLLECTOR_TOKEN` | — | — | RAG用メッセージ収集専用 Discord Bot トークン |
 | `GEMINI_API_KEY` | ✅ | — | Google Gemini API キー |
 | `OLLAMA_BASE_URL` | — | `http://localhost:11434` | Ollama サーバーの URL |
 | `RAG_SERVICE_URL` | — | `http://localhost:8002` | RAG サービスの URL（Docker 内では `http://rag:8002`） |
 | `PERSONAS_DIR` | — | `personas` | ペルソナ YAML ディレクトリのパス |
 | `HISTORY_DIR` | — | `data/history` | 会話履歴 SQLite DB の保存先 |
 | `TRANSFORMERS_CACHE` | — | `/app/.cache` | Hugging Face モデルキャッシュパス（RAG サービス） |
+| `RAG_DEVICE` | — | `auto` | RAG 埋め込みモデルの実行デバイス |
+| `RAG_TORCH_NUM_THREADS` | — | `auto` | RAG のCPUスレッド数 |
+| `RAG_ENCODE_BATCH_SIZE` | — | `auto` | RAG再構築時の埋め込みバッチサイズ。MPSでは大きめ、Pi/CPUでは控えめに自動調整 |
+| `RAG_MAX_EMBED_TEXT_CHARS` | — | `12000` | 1検索単位あたり埋め込みへ渡す最大文字数 |
+| `RAG_INDEX_REBUILD_TIMEOUT_MS` | — | `7200000` | Discord履歴FAISS再構築リクエストのタイムアウト |
+| `RAG_INDEX_REBUILD_ATTEMPTS` | — | `1` | Discord履歴FAISS再構築リクエストの試行回数 |
 
 ---
 
@@ -150,6 +167,8 @@ docker compose restart bot_core
 ---
 
 ## RAG インデックスの管理
+
+Discord履歴RAGは、`DISCORD_RAG_COLLECTOR_TOKEN` が設定されている場合は収集専用Botを優先して使います。収集専用Botが参加していないサーバーだけ、会話用Botがfallbackとして履歴を収集します。検索・インデックス化の対象は各ペルソナの会話用Botが参加しているサーバーに限定されます。
 
 ### テキストを追加
 
