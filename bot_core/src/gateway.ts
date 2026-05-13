@@ -9,6 +9,7 @@ import { Routes } from "discord-api-types/v10"
 import type { Persona } from "./persona-manager.ts"
 import { Orchestrator } from "./orchestrator.ts"
 import type { ChatAttachment } from "./llm/types.ts"
+import { DiscordCollector } from "./discord-collector.ts"
 
 const TYPING_INTERVAL_MS = 5_000
 const MAX_MESSAGE_LENGTH = 2000
@@ -233,6 +234,7 @@ export function createClientForPersona(
   token: string,
 ): Client {
   const orchestrator = new Orchestrator(persona)
+  let collector: DiscordCollector | null = null
   const processedMessageIds = new Map<string, number>()
 
   function rememberMessage(messageId: string): boolean {
@@ -281,6 +283,7 @@ export function createClientForPersona(
         input.userMessage,
         input.guildId,
         input.attachments,
+        collector?.getAccessibleGuildIds() ?? [...client.guilds.cache.keys()],
       )
 
       abortController.abort()
@@ -332,6 +335,8 @@ export function createClientForPersona(
 
   client.once(Events.ClientReady, (readyClient) => {
     console.log(`[${persona.id}] Logged in as ${readyClient.user.tag}`)
+    collector = new DiscordCollector(client, persona)
+    collector.start()
   })
 
   client.on("raw", (packet) => {

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import faiss
 import numpy as np
@@ -78,7 +80,123 @@ class FaissIndexer:
         self._save(index, meta_list, index_path)
         return len(texts)
 
+    def build_from_discord_db(
+        self,
+        db_path: str,
+        index_path: str,
+        guild_ids: list[str],
+        timezone: str = "Asia/Tokyo",
+    ) -> int:
+        self._ensure_dir(index_path)
+        if not guild_ids or not os.path.exists(db_path):
+            self._save_empty(index_path)
+            return 0
+
+        placeholders = ",".join("?" for _ in guild_ids)
+        query = f"""
+            SELECT
+              guild_id, unit_id, unit_name, author_tag, content, attachments, created_at
+            FROM discord_messages
+            WHERE guild_id IN ({placeholders})
+            ORDER BY guild_id, unit_id, created_at ASC
+        """
+
+        tz = ZoneInfo(timezone)
+        units: dict[tuple[str, str, str], dict[str, Any]] = {}
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            for row in conn.execute(query, guild_ids):
+                day = _local_day(int(row["created_at"]), tz)
+                key = (row["guild_id"], row["unit_id"], day)
+                unit = units.setdefault(
+                    key,
+                    {
+                        "guild_id": row["guild_id"],
+                        "unit_id": row["unit_id"],
+                        "unit_name": row["unit_name"],
+                        "date": day,
+                        "lines": [],
+                    },
+                )
+                content = str(row["content"] or "").strip()
+                attachment_text = _format_attachments(str(row["attachments"] or "[]"))
+                if not content and not attachment_text:
+                    continue
+                timestamp = _local_time(int(row["created_at"]), tz)
+                body = content if content else attachment_text
+                if content and attachment_text:
+                    body = f"{content} {attachment_text}"
+                unit["lines"].append(f"[{timestamp}] {row['author_tag']}: {body}")
+
+        items: list[dict[str, Any]] = []
+        for unit in units.values():
+            if not unit["lines"]:
+                continue
+            header = f"Discord履歴: {unit['unit_name']} / {unit['date']}"
+            text = header + "\n" + "\n".join(unit["lines"])
+            items.append({
+                "text": text,
+                "guild_id": unit["guild_id"],
+                "unit_id": unit["unit_id"],
+                "unit_name": unit["unit_name"],
+                "date": unit["date"],
+                "source": "discord",
+            })
+
+        return self.build_from_items(items, index_path)
+
+    def build_from_items(self, items: list[dict[str, Any]], index_path: str) -> int:
+        self._ensure_dir(index_path)
+        if not items:
+            self._save_empty(index_path)
+            return 0
+
+        texts = [str(item["text"]) for item in items]
+        embeddings: np.ndarray = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+        dim = embeddings.shape[1]
+        index = faiss.IndexFlatL2(dim)
+        index.add(embeddings.astype(np.float32))
+        self._save(index, items, index_path)
+        return len(items)
+
     def _save(self, index: faiss.Index, meta_list: list[dict[str, Any]], index_path: str) -> None:
         faiss.write_index(index, self._faiss_path(index_path))
         with open(self._meta_path(index_path), "w", encoding="utf-8") as f:
             json.dump(meta_list, f, ensure_ascii=False, indent=2)
+
+    def _save_empty(self, index_path: str) -> None:
+        dim = self.model.get_sentence_embedding_dimension()
+        if dim is None:
+            dim = self.model.encode([""], convert_to_numpy=True).shape[1]
+        self._save(faiss.IndexFlatL2(dim), [], index_path)
+
+
+def _local_day(timestamp: int, timezone: ZoneInfo) -> str:
+    return _dt(timestamp, timezone).strftime("%Y-%m-%d")
+
+
+def _local_time(timestamp: int, timezone: ZoneInfo) -> str:
+    return _dt(timestamp, timezone).strftime("%H:%M")
+
+
+def _dt(timestamp: int, timezone: ZoneInfo):
+    from datetime import datetime
+    return datetime.fromtimestamp(timestamp, timezone)
+
+
+def _format_attachments(raw: str) -> str:
+    try:
+        attachments = json.loads(raw)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(attachments, list) or not attachments:
+        return ""
+
+    names = []
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        filename = item.get("filename")
+        if isinstance(filename, str) and filename:
+            names.append(filename)
+    return "添付: " + ", ".join(names) if names else ""

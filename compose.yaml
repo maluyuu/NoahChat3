@@ -3,6 +3,9 @@ services:
     build: ./services/rag
     ports:
       - "8002:8002"
+    environment:
+      DISCORD_MESSAGE_DB: /app/history/discord_messages.db
+      DISCORD_RAG_TIMEZONE: Asia/Tokyo
     restart: unless-stopped
     volumes:
       - ./data/faiss_indices:/app/indices
@@ -17,6 +20,10 @@ services:
   bot_core:
     build: ./bot_core
     env_file: .env
+    environment:
+      TZ: Asia/Tokyo
+      DISCORD_MESSAGE_DB: /app/data/history/discord_messages.db
+      DISCORD_RAG_UPDATE_HOUR: "3"
     restart: unless-stopped
     depends_on:
       rag:

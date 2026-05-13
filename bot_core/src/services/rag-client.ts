@@ -12,12 +12,18 @@ export async function ragSearch(
   query: string,
   indexPath: string,
   topK: number,
+  guildIds: string[] = [],
 ): Promise<string[]> {
   try {
     const response = await fetch(`${RAG_SERVICE_URL}/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, index_path: indexPath, top_k: topK }),
+      body: JSON.stringify({
+        query,
+        index_path: indexPath,
+        top_k: topK,
+        filters: guildIds.length > 0 ? { guild_id: guildIds } : {},
+      }),
       signal: AbortSignal.timeout(10_000),
     })
 

@@ -17,7 +17,13 @@ class FaissRetriever:
     def __init__(self, model: SentenceTransformer) -> None:
         self.model = model
 
-    def search(self, query: str, index_path: str, top_k: int) -> list[str]:
+    def search(
+        self,
+        query: str,
+        index_path: str,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[str]:
         faiss_file = index_path + FAISS_SUFFIX
         meta_file = index_path + META_SUFFIX
 
@@ -32,15 +38,33 @@ class FaissRetriever:
             return []
 
         query_embedding: np.ndarray = self.model.encode([query], convert_to_numpy=True)
-        k = min(top_k, index.ntotal)
+        k = index.ntotal if filters else min(top_k, index.ntotal)
         _distances, indices = index.search(query_embedding.astype(np.float32), k)
 
         results: list[str] = []
         for idx in indices[0]:
             if idx < 0 or idx >= len(meta_list):
                 continue
-            text = meta_list[idx].get("text", "")
+            metadata = meta_list[idx]
+            if filters and not _matches_filters(metadata, filters):
+                continue
+            text = metadata.get("text", "")
             if text:
                 results.append(text)
+            if len(results) >= top_k:
+                break
 
         return results
+
+
+def _matches_filters(metadata: dict[str, Any], filters: dict[str, Any]) -> bool:
+    for key, expected in filters.items():
+        if expected is None:
+            continue
+        actual = metadata.get(key)
+        if isinstance(expected, list):
+            if actual not in expected:
+                return False
+        elif actual != expected:
+            return False
+    return True

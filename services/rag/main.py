@@ -14,6 +14,8 @@ from retriever import FaissRetriever
 
 MODEL_NAME = "cl-nagoya/ruri-v3-30m"
 CACHE_DIR = os.environ.get("TRANSFORMERS_CACHE", "/app/.cache")
+DISCORD_MESSAGE_DB = os.environ.get("DISCORD_MESSAGE_DB", "/app/history/discord_messages.db")
+DISCORD_RAG_TIMEZONE = os.environ.get("DISCORD_RAG_TIMEZONE", "Asia/Tokyo")
 
 # グローバル変数（起動時に初期化）
 _model: SentenceTransformer | None = None
@@ -54,6 +56,7 @@ class SearchRequest(BaseModel):
     query: str
     index_path: str
     top_k: int = 5
+    filters: dict[str, Any] = {}
 
 
 class SearchResponse(BaseModel):
@@ -80,6 +83,13 @@ class IndexBuildResponse(BaseModel):
     count: int
 
 
+class DiscordIndexBuildRequest(BaseModel):
+    index_path: str
+    guild_ids: list[str]
+    db_path: str | None = None
+    timezone: str | None = None
+
+
 class HealthResponse(BaseModel):
     status: str
 
@@ -94,7 +104,7 @@ def health() -> HealthResponse:
 @app.post("/search", response_model=SearchResponse)
 def search(req: SearchRequest) -> SearchResponse:
     try:
-        chunks = get_retriever().search(req.query, req.index_path, req.top_k)
+        chunks = get_retriever().search(req.query, req.index_path, req.top_k, req.filters)
         return SearchResponse(chunks=chunks)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -113,6 +123,20 @@ def index_add(req: IndexAddRequest) -> IndexAddResponse:
 def index_build(req: IndexBuildRequest) -> IndexBuildResponse:
     try:
         count = get_indexer().build_from_dir(req.source_dir, req.index_path)
+        return IndexBuildResponse(status="ok", count=count)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/index/build-discord", response_model=IndexBuildResponse)
+def index_build_discord(req: DiscordIndexBuildRequest) -> IndexBuildResponse:
+    try:
+        count = get_indexer().build_from_discord_db(
+            req.db_path or DISCORD_MESSAGE_DB,
+            req.index_path,
+            req.guild_ids,
+            req.timezone or DISCORD_RAG_TIMEZONE,
+        )
         return IndexBuildResponse(status="ok", count=count)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

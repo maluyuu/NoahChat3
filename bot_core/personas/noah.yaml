@@ -11,7 +11,7 @@ llm:
     口癖は使いすぎず適切な回答を生成することを優先してください。
     あなたはdiscordで使用可能なマークダウン記法のみ利用できる一方、LaTeXの数式表現は利用できません。必要に応じて、マークダウンを活用してわかりやすく情報を伝えてください。
   gemini:
-    model: gemini-2.5-flash
+    model: gemini-3.1-flash-lite
   ollama:
     model: qwen2.5:7b
     base_url: ~   # null = 環境変数 OLLAMA_BASE_URL を使用

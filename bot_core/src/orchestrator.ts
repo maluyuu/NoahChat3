@@ -36,6 +36,7 @@ export class Orchestrator {
     userMessage: string,
     guildId = "dm",
     attachments: ChatAttachment[] = [],
+    searchableGuildIds: string[] = [],
   ): Promise<string> {
     const { persona } = this
 
@@ -44,12 +45,13 @@ export class Orchestrator {
 
     // 2. RAG コンテキストを取得
     let systemPrompt = persona.llm.system_prompt
-    if (persona.rag.enabled) {
+    if (persona.rag.enabled && searchableGuildIds.length > 0) {
       try {
         const chunks = await ragSearch(
           userMessage,
           persona.rag.index_path,
           persona.rag.top_k,
+          searchableGuildIds,
         )
         if (chunks.length > 0) {
           const ragContext = chunks.join("\n\n")
