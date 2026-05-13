@@ -5,6 +5,7 @@ import { OllamaProvider } from "./llm/ollama.ts"
 import { FallbackLLMClient } from "./llm/fallback-client.ts"
 import { ragSearch } from "./services/rag-client.ts"
 import type { ChatAttachment } from "./llm/types.ts"
+import type { ChatMessage } from "./llm/types.ts"
 
 const HISTORY_LIMIT = 20
 
@@ -41,7 +42,7 @@ export class Orchestrator {
     const { persona } = this
 
     // 1. 会話履歴を取得
-    const history = this.session.getHistory(channelId, HISTORY_LIMIT)
+    const history = stripHistoryAttachments(this.session.getHistory(channelId, HISTORY_LIMIT))
 
     // 2. RAG コンテキストを取得
     let systemPrompt = persona.llm.system_prompt
@@ -89,4 +90,26 @@ export class Orchestrator {
   destroy(): void {
     this.session.close()
   }
+}
+
+function stripHistoryAttachments(history: ChatMessage[]): ChatMessage[] {
+  return history.map((message) => {
+    const attachments = message.attachments ?? []
+    if (attachments.length === 0) return message
+
+    const attachmentSummary = attachments
+      .map((attachment) => attachment.filename)
+      .filter(Boolean)
+      .join(", ")
+
+    const suffix = attachmentSummary
+      ? `\n[過去の添付ファイル: ${attachmentSummary}]`
+      : "\n[過去の添付ファイルあり]"
+
+    return {
+      ...message,
+      content: `${message.content}${suffix}`.trim(),
+      attachments: [],
+    }
+  })
 }

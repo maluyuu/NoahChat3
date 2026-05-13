@@ -335,13 +335,38 @@ export function createClientForPersona(
     console.log(`[${persona.id}] Logged in as ${readyClient.user.tag}`)
   })
 
-  client.on("raw", (packet) => {
+  client.on("raw", (packet: RawMessageCreatePacket) => {
     if (packet.t !== "MESSAGE_CREATE") return
     const channelId = typeof packet.d?.channel_id === "string" ? packet.d.channel_id : "unknown"
     const guildId = typeof packet.d?.guild_id === "string" ? packet.d.guild_id : "dm"
     console.log(
       `[${persona.id}] Raw MESSAGE_CREATE received for channel ${channelId} (guild: ${guildId})`,
     )
+
+    const data = packet.d
+    if (!data?.id || !data.channel_id || !data.author) return
+    if (data.author.bot || data.webhook_id) return
+
+    const isDm = !data.guild_id
+    const botUserId = client.user?.id ?? ""
+    const isMentioned = data.mentions?.some((mention) => mention.id === botUserId) ?? false
+    if (!isDm && !isMentioned) return
+
+    const content = typeof data.content === "string" ? data.content : ""
+    const userMessage = extractUserMessage(content, isDm)
+    const attachments = normalizeRawAttachments(data.attachments)
+    if (!userMessage && attachments.length === 0) return
+
+    void handleIncomingMessage({
+      messageId: data.id,
+      channelId: data.channel_id,
+      guildId,
+      userId: data.author.id,
+      authorTag: formatAuthorTag(data.author),
+      userMessage,
+      attachments,
+      isDm,
+    })
   })
 
   client.on(Events.MessageCreate, async (msg: Message) => {
