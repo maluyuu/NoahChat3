@@ -93,13 +93,30 @@ function extractResponseText(data: GeminiGenerateContentResponse): string {
   return text
 }
 
+const KEY_ROTATABLE_STATUS_CODES = new Set([429, 500, 503])
+const KEY_ROTATABLE_PATTERNS = [
+  /quota/i,
+  /rate.?limit/i,
+  /resource.?exhausted/i,
+  /too.?many.?requests/i,
+]
+
+function isKeyRotatable(status: number, data: GeminiGenerateContentResponse): boolean {
+  if (KEY_ROTATABLE_STATUS_CODES.has(status)) return true
+  const message = data.error?.message ?? ""
+  return KEY_ROTATABLE_PATTERNS.some((p) => p.test(message))
+}
+
 export class GeminiProvider implements LLMProvider {
   readonly name = "gemini"
-  private apiKey: string
+  private apiKeys: string[]
   private modelName: string
 
-  constructor(apiKey: string, modelName: string) {
-    this.apiKey = apiKey
+  constructor(apiKeys: string | string[], modelName: string) {
+    this.apiKeys = Array.isArray(apiKeys) ? apiKeys : [apiKeys]
+    if (this.apiKeys.length === 0) {
+      throw new Error("GeminiProvider requires at least one API key")
+    }
     this.modelName = modelName
   }
 
@@ -109,28 +126,50 @@ export class GeminiProvider implements LLMProvider {
       throw new Error("No valid messages provided to Gemini")
     }
 
-    const response = await fetch(
-      `${GEMINI_API_BASE_URL}/models/${encodeURIComponent(this.modelName)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": this.apiKey,
-        },
-        body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: systemPrompt }],
+    let lastError: unknown
+    for (let i = 0; i < this.apiKeys.length; i++) {
+      const apiKey = this.apiKeys[i]
+      try {
+        const response = await fetch(
+          `${GEMINI_API_BASE_URL}/models/${encodeURIComponent(this.modelName)}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey,
+            },
+            body: JSON.stringify({
+              system_instruction: {
+                parts: [{ text: systemPrompt }],
+              },
+              contents,
+            }),
           },
-          contents,
-        }),
-      },
-    )
+        )
 
-    const data = (await response.json()) as GeminiGenerateContentResponse
-    if (!response.ok) {
-      throw new Error(JSON.stringify(data))
+        const data = (await response.json()) as GeminiGenerateContentResponse
+        if (!response.ok) {
+          if (i < this.apiKeys.length - 1 && isKeyRotatable(response.status, data)) {
+            console.warn(
+              `[gemini] API key #${i + 1} failed (HTTP ${response.status}), trying next key`,
+            )
+            lastError = new Error(JSON.stringify(data))
+            continue
+          }
+          throw new Error(JSON.stringify(data))
+        }
+
+        return extractResponseText(data)
+      } catch (error) {
+        if (i < this.apiKeys.length - 1) {
+          console.warn(`[gemini] API key #${i + 1} threw an error, trying next key:`, error instanceof Error ? error.message : error)
+          lastError = error
+          continue
+        }
+        throw error
+      }
     }
 
-    return extractResponseText(data)
+    throw lastError
   }
 }
