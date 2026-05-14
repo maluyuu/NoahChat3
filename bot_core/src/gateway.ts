@@ -260,12 +260,14 @@ export function createClientForPersona(
     userMessage: string
     attachments: ChatAttachment[]
     isDm: boolean
+    isAlwaysRespondChannel?: boolean
     message?: Message
   }): Promise<void> {
     if (rememberMessage(input.messageId)) return
 
+    const triggerType = input.isDm ? "DM" : input.isAlwaysRespondChannel ? "always-respond-channel" : "mention"
     console.log(
-      `[${persona.id}] Received ${input.isDm ? "DM" : "mention"} from ${input.authorTag} in channel ${input.channelId} (${input.attachments.length} attachments)`,
+      `[${persona.id}] Received ${triggerType} from ${input.authorTag} in channel ${input.channelId} (${input.attachments.length} attachments)`,
     )
 
     const abortController = new AbortController()
@@ -350,7 +352,8 @@ export function createClientForPersona(
     const isDm = !data.guild_id
     const botUserId = client.user?.id ?? ""
     const isMentioned = data.mentions?.some((mention) => mention.id === botUserId) ?? false
-    if (!isDm && !isMentioned) return
+    const isAlwaysRespondChannel = persona.always_respond_channels.includes(data.channel_id)
+    if (!isDm && !isMentioned && !isAlwaysRespondChannel) return
 
     const content = typeof data.content === "string" ? data.content : ""
     const userMessage = extractUserMessage(content, isDm)
@@ -366,6 +369,7 @@ export function createClientForPersona(
       userMessage,
       attachments,
       isDm,
+      isAlwaysRespondChannel,
     })
   })
 
@@ -387,7 +391,8 @@ export function createClientForPersona(
 
     const isDm = msg.channel.isDMBased()
     const isMentioned = msg.mentions.users.has(client.user?.id ?? "")
-    if (!isDm && !isMentioned) return
+    const isAlwaysRespondChannel = persona.always_respond_channels.includes(msg.channel.id)
+    if (!isDm && !isMentioned && !isAlwaysRespondChannel) return
 
     if (!msg.channel.isTextBased()) return
 
@@ -404,6 +409,7 @@ export function createClientForPersona(
       userMessage,
       attachments,
       isDm,
+      isAlwaysRespondChannel,
       message: msg,
     })
   })

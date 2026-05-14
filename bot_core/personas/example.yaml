@@ -19,3 +19,7 @@ rag:
 mcp:
   auto_approve: []
   require_confirm: []
+
+# メンション不要で常に応答するチャンネルID一覧（省略時は空）
+# always_respond_channels:
+#   - "123456789012345678"
