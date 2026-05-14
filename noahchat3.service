@@ -1,0 +1,17 @@
+[Unit]
+Description=NoahChat3 local bot service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/admin/.openclaw/workspace/NoahChat3
+Environment=PATH=/home/admin/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/admin/.bun/bin/bun run start
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/admin/.openclaw/workspace/NoahChat3/noahchat3.service.log
+StandardError=append:/home/admin/.openclaw/workspace/NoahChat3/noahchat3.service.log
+
+[Install]
+WantedBy=default.target

@@ -38,6 +38,7 @@ export const PersonaSchema = z.object({
   llm: LLMConfigSchema,
   rag: RagConfigSchema,
   mcp: McpConfigSchema.default({}),
+  always_respond_channels: z.array(z.string()).default([]),
 })
 
 export type Persona = z.infer<typeof PersonaSchema>
