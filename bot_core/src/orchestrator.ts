@@ -22,8 +22,11 @@ export class Orchestrator {
     if (!apiKey) {
       throw new Error(`[${persona.id}] GEMINI_API_KEY is not set`)
     }
+    const apiKeys = [apiKey, process.env.GEMINI_API_KEY_SECONDARY].filter(
+      (k): k is string => typeof k === "string" && k.length > 0,
+    )
 
-    const gemini = new GeminiProvider(apiKey, persona.llm.gemini.model)
+    const gemini = new GeminiProvider(apiKeys, persona.llm.gemini.model)
     const ollama = new OllamaProvider(
       persona.llm.ollama.model,
       persona.llm.ollama.base_url ?? undefined,
