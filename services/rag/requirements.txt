@@ -6,3 +6,6 @@ numpy==2.2.1
 pydantic==2.10.4
 protobuf==5.29.3
 sentencepiece==0.2.1
+# Raspberry Pi local startup: keep torch CPU-only to avoid huge CUDA wheels
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.0+cpu ; platform_system == "Linux" and (platform_machine == "aarch64" or platform_machine == "arm64")
