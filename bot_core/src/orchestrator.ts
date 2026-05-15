@@ -69,10 +69,19 @@ export class Orchestrator {
       }
     }
 
+    // 会話履歴がある場合、最新メッセージを明確に識別するための指示を付加する
+    if (history.length > 0) {
+      systemPrompt += "\n\n---\n上記は過去の会話履歴です。直前までのやり取りを文脈として参照しつつ、最後に届いた【最新メッセージ】にのみ返答してください。"
+    }
+
     // 3. 現在のユーザーメッセージを履歴に追加してLLMに渡す
+    // LLM 向けには最新メッセージを明示するラベルを付与する（DB保存は元のまま）
+    const currentMessageContent = history.length > 0
+      ? `【最新メッセージ】\n${userMessage}`
+      : userMessage
     const messages = [
       ...history,
-      { role: "user" as const, content: userMessage, attachments },
+      { role: "user" as const, content: currentMessageContent, attachments },
     ]
 
     // 4. LLM に応答を生成させる
