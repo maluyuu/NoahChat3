@@ -8,6 +8,7 @@
     "dev": "bun --watch src/main.ts"
   },
   "dependencies": {
+    "@google/genai": "^2.3.0",
     "better-sqlite3": "^11.7.0",
     "discord.js": "^14.16.3",
     "yaml": "^2.6.1",
