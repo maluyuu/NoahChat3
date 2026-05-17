@@ -8,6 +8,7 @@ import type { ChatAttachment } from "./llm/types.ts"
 import type { ChatMessage } from "./llm/types.ts"
 
 const HISTORY_LIMIT = 20
+const DEFAULT_TIMEZONE = "Asia/Tokyo"
 
 export class Orchestrator {
   private session: SessionManager
@@ -54,7 +55,7 @@ export class Orchestrator {
     const history = stripHistoryAttachments(this.session.getHistory(channelId, HISTORY_LIMIT))
 
     // 2. RAG コンテキストを取得
-    let systemPrompt = persona.llm.system_prompt
+    let systemPrompt = `${persona.llm.system_prompt}\n\n---\n${buildCurrentTimeContext()}`
     if (persona.rag.enabled && searchableGuildIds.length > 0) {
       try {
         const chunks = await ragSearch(
@@ -130,4 +131,37 @@ function stripHistoryAttachments(history: ChatMessage[]): ChatMessage[] {
       attachments: [],
     }
   })
+}
+
+function buildCurrentTimeContext(now = new Date()): string {
+  const requestedTimezone = process.env.BOT_TIMEZONE ?? process.env.TZ ?? DEFAULT_TIMEZONE
+  const timezone = isValidTimezone(requestedTimezone) ? requestedTimezone : DEFAULT_TIMEZONE
+  const formatted = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(now)
+
+  return [
+    "現在日時情報:",
+    `- 現在日時: ${formatted}`,
+    `- タイムゾーン: ${timezone}`,
+    `- ISO時刻: ${now.toISOString()}`,
+    "日時に関する質問では、この現在日時情報を基準にしてください。",
+  ].join("\n")
+}
+
+function isValidTimezone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("ja-JP", { timeZone: timezone }).format()
+    return true
+  } catch {
+    return false
+  }
 }
