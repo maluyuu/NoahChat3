@@ -113,6 +113,7 @@ bun run src/main.ts
 | `RAG_SERVICE_URL` | — | `http://localhost:8002` | RAG サービスの URL（Docker 内では `http://rag:8002`） |
 | `PERSONAS_DIR` | — | `personas` | ペルソナ YAML ディレクトリのパス |
 | `HISTORY_DIR` | — | `data/history` | 会話履歴 SQLite DB の保存先 |
+| `BOT_TIMEZONE` | — | `TZ` または `Asia/Tokyo` | LLM に渡す現在日時のタイムゾーン |
 | `TRANSFORMERS_CACHE` | — | `/app/.cache` | Hugging Face モデルキャッシュパス（RAG サービス） |
 | `RAG_DEVICE` | — | `auto` | RAG 埋め込みモデルの実行デバイス |
 | `RAG_TORCH_NUM_THREADS` | — | `auto` | RAG のCPUスレッド数 |
