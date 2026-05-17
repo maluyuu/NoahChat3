@@ -26,7 +26,13 @@ export class Orchestrator {
       (k): k is string => typeof k === "string" && k.length > 0,
     )
 
-    const gemini = new GeminiProvider(apiKeys, persona.llm.gemini.model)
+    const gemini = new GeminiProvider(apiKeys, persona.llm.gemini.model, {
+      webSearch: {
+        enabled: persona.llm.web_search.enabled,
+        maxResults: persona.llm.web_search.max_results,
+        searchDepth: persona.llm.web_search.search_depth,
+      },
+    })
     const ollama = new OllamaProvider(
       persona.llm.ollama.model,
       persona.llm.ollama.base_url ?? undefined,

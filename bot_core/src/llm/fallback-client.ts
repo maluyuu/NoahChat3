@@ -8,11 +8,20 @@ const NON_RETRIABLE_PATTERNS = [
 ]
 
 function isNonRetriable(error: unknown): boolean {
+  const status = getErrorStatus(error)
+  if (status && status >= 400 && status < 500) return true
+
   const message = error instanceof Error ? error.message : String(error)
   // HTTP 400 系エラー
   if (/\b4[0-9]{2}\b/.test(message)) return true
   // コンテンツポリシー違反
   return NON_RETRIABLE_PATTERNS.some((pattern) => pattern.test(message))
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined
+  const status = (error as { status?: unknown }).status
+  return typeof status === "number" ? status : undefined
 }
 
 export class FallbackLLMClient {

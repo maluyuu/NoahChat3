@@ -14,10 +14,17 @@ const OllamaConfigSchema = z.object({
   base_url: z.string().nullable().optional(),
 })
 
+const WebSearchConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  max_results: z.number().int().positive().max(10).default(5),
+  search_depth: z.enum(["ultra-fast", "fast", "basic", "advanced"]).default("basic"),
+})
+
 const LLMConfigSchema = z.object({
   system_prompt: z.string(),
   gemini: GeminiConfigSchema.default({}),
   ollama: OllamaConfigSchema.default({}),
+  web_search: WebSearchConfigSchema.default({}),
 })
 
 const RagConfigSchema = z.object({
