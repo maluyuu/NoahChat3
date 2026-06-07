@@ -45,6 +45,13 @@ interface RawMessageCreatePacket {
     author?: RawAuthor
     mentions?: RawMention[]
     attachments?: RawAttachment[]
+    message_reference?: {
+      message_id?: string
+      channel_id?: string
+    }
+    referenced_message?: {
+      author?: RawAuthor
+    } | null
   }
 }
 
@@ -125,6 +132,55 @@ function extractUserMessage(content: string, isDm: boolean): string {
   return isDm
     ? content.trim()
     : content.replace(/<@!?\d+>/g, "").trim()
+}
+
+async function isReplyToBotMessage(
+  msg: Message,
+  botUserId: string,
+): Promise<boolean> {
+  if (!botUserId || !msg.reference?.messageId) return false
+  if (msg.reference.channelId && msg.reference.channelId !== msg.channel.id) return false
+
+  try {
+    const referencedMessage = await msg.fetchReference()
+    return referencedMessage.author.id === botUserId
+  } catch (error) {
+    console.warn(
+      `Failed to fetch referenced message ${msg.reference.messageId}:`,
+      error instanceof Error ? error.message : error,
+    )
+    return false
+  }
+}
+
+async function isRawReplyToBotMessage(
+  client: Client,
+  data: NonNullable<RawMessageCreatePacket["d"]>,
+  botUserId: string,
+): Promise<boolean> {
+  if (!botUserId) return false
+
+  const referencedAuthorId = data.referenced_message?.author?.id
+  if (referencedAuthorId) return referencedAuthorId === botUserId
+
+  const referencedMessageId = data.message_reference?.message_id
+  if (!referencedMessageId) return false
+
+  const referencedChannelId = data.message_reference?.channel_id ?? data.channel_id
+  if (!referencedChannelId) return false
+
+  try {
+    const referencedMessage = await client.rest.get(
+      Routes.channelMessage(referencedChannelId, referencedMessageId),
+    ) as { author?: RawAuthor }
+    return referencedMessage.author?.id === botUserId
+  } catch (error) {
+    console.warn(
+      `[raw] Failed to fetch referenced message ${referencedMessageId}:`,
+      error instanceof Error ? error.message : error,
+    )
+    return false
+  }
 }
 
 async function sendResponse(
@@ -261,11 +317,18 @@ export function createClientForPersona(
     attachments: ChatAttachment[]
     isDm: boolean
     isAlwaysRespondChannel?: boolean
+    isReplyToBot?: boolean
     message?: Message
   }): Promise<void> {
     if (rememberMessage(input.messageId)) return
 
-    const triggerType = input.isDm ? "DM" : input.isAlwaysRespondChannel ? "always-respond-channel" : "mention"
+    const triggerType = input.isDm
+      ? "DM"
+      : input.isAlwaysRespondChannel
+        ? "always-respond-channel"
+        : input.isReplyToBot
+          ? "reply-to-bot"
+          : "mention"
     console.log(
       `[${persona.id}] Received ${triggerType} from ${input.authorTag} in channel ${input.channelId} (${input.attachments.length} attachments)`,
     )
@@ -337,7 +400,7 @@ export function createClientForPersona(
     console.log(`[${persona.id}] Logged in as ${readyClient.user.tag}`)
   })
 
-  client.on("raw", (packet: RawMessageCreatePacket) => {
+  client.on("raw", async (packet: RawMessageCreatePacket) => {
     if (packet.t !== "MESSAGE_CREATE") return
     const channelId = typeof packet.d?.channel_id === "string" ? packet.d.channel_id : "unknown"
     const guildId = typeof packet.d?.guild_id === "string" ? packet.d.guild_id : "dm"
@@ -353,7 +416,10 @@ export function createClientForPersona(
     const botUserId = client.user?.id ?? ""
     const isMentioned = data.mentions?.some((mention) => mention.id === botUserId) ?? false
     const isAlwaysRespondChannel = persona.always_respond_channels.includes(data.channel_id)
-    if (!isDm && !isMentioned && !isAlwaysRespondChannel) return
+    const isReplyToBot = !isDm && !isMentioned && !isAlwaysRespondChannel
+      ? await isRawReplyToBotMessage(client, data, botUserId)
+      : false
+    if (!isDm && !isMentioned && !isAlwaysRespondChannel && !isReplyToBot) return
 
     const content = typeof data.content === "string" ? data.content : ""
     const userMessage = extractUserMessage(content, isDm)
@@ -370,6 +436,7 @@ export function createClientForPersona(
       attachments,
       isDm,
       isAlwaysRespondChannel,
+      isReplyToBot,
     })
   })
 
@@ -390,9 +457,13 @@ export function createClientForPersona(
     }
 
     const isDm = msg.channel.isDMBased()
-    const isMentioned = msg.mentions.users.has(client.user?.id ?? "")
+    const botUserId = client.user?.id ?? ""
+    const isMentioned = msg.mentions.users.has(botUserId)
     const isAlwaysRespondChannel = persona.always_respond_channels.includes(msg.channel.id)
-    if (!isDm && !isMentioned && !isAlwaysRespondChannel) return
+    const isReplyToBot = !isDm && !isMentioned && !isAlwaysRespondChannel
+      ? await isReplyToBotMessage(msg, botUserId)
+      : false
+    if (!isDm && !isMentioned && !isAlwaysRespondChannel && !isReplyToBot) return
 
     if (!msg.channel.isTextBased()) return
 
@@ -410,6 +481,7 @@ export function createClientForPersona(
       attachments,
       isDm,
       isAlwaysRespondChannel,
+      isReplyToBot,
       message: msg,
     })
   })
