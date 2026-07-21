@@ -7,7 +7,7 @@ import { ragSearch } from "./services/rag-client.ts"
 import type { ChatAttachment } from "./llm/types.ts"
 import type { ChatMessage } from "./llm/types.ts"
 
-const HISTORY_LIMIT = 20
+const HISTORY_LIMIT = 8
 const DEFAULT_TIMEZONE = "Asia/Tokyo"
 
 export class Orchestrator {
@@ -51,7 +51,7 @@ export class Orchestrator {
   ): Promise<string> {
     const { persona } = this
 
-    // 1. 会話履歴を取得
+    // 1. 会話履歴を取得（直近だけに絞る）
     const history = stripHistoryAttachments(this.session.getHistory(channelId, HISTORY_LIMIT))
 
     // 2. RAG コンテキストを取得
@@ -76,9 +76,9 @@ export class Orchestrator {
       }
     }
 
-    // 会話履歴がある場合、最新メッセージを明確に識別するための指示を付加する
+    // 会話履歴は参考情報に留め、最新メッセージを最優先にする
     if (history.length > 0) {
-      systemPrompt += "\n\n---\n上記は過去の会話履歴です。直前までのやり取りを文脈として参照しつつ、最後に届いた【最新メッセージ】にのみ返答してください。"
+      systemPrompt += "\n\n---\n以下は最近の会話履歴です。必要最小限だけ参照し、最後に届いた【最新メッセージ】に主に返答してください。過去の話題を勝手に継続しすぎないでください。"
     }
 
     // 3. 現在のユーザーメッセージを履歴に追加してLLMに渡す
@@ -86,10 +86,12 @@ export class Orchestrator {
     const currentMessageContent = history.length > 0
       ? `【最新メッセージ】\n${userMessage}`
       : userMessage
-    const messages = [
-      ...history,
-      { role: "user" as const, content: currentMessageContent, attachments },
-    ]
+    const messages = history.length > 0
+      ? [
+          ...history.slice(-4),
+          { role: "user" as const, content: currentMessageContent, attachments },
+        ]
+      : [{ role: "user" as const, content: currentMessageContent, attachments }]
 
     // 4. LLM に応答を生成させる
     const llmResponse = await this.llmClient.chat(messages, systemPrompt)
