@@ -29,7 +29,16 @@ export class DiscordMessageStore {
   constructor(dbPath = DISCORD_MESSAGE_DB) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath, { create: true })
+    this.configurePragmas()
     this.initialize()
+  }
+
+  private configurePragmas(): void {
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA busy_timeout = 5000;
+    `)
   }
 
   private initialize(): void {
