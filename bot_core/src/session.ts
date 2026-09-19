@@ -52,12 +52,12 @@ export class SessionManager {
   getHistory(channelId: string, limit: number): ChatMessage[] {
     const stmt = this.db.query(`
       SELECT role, content, attachments FROM (
-        SELECT role, content, attachments, created_at
+        SELECT id, role, content, attachments, created_at
         FROM messages
         WHERE channel_id = ?
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT ?
-      ) ORDER BY created_at ASC
+      ) ORDER BY created_at ASC, id ASC
     `)
     const rows = stmt.all(channelId, limit) as MessageRow[]
     return rows.map((row) => ({

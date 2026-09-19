@@ -8,12 +8,14 @@ import type { ChatAttachment } from "./llm/types.ts"
 import type { ChatMessage } from "./llm/types.ts"
 
 const HISTORY_LIMIT = 8
+const HISTORY_PROMPT_LIMIT = 8
 const DEFAULT_TIMEZONE = "Asia/Tokyo"
 
 export class Orchestrator {
   private session: SessionManager
   private llmClient: FallbackLLMClient
   private persona: Persona
+  private channelQueues = new Map<string, Promise<unknown>>()
 
   constructor(persona: Persona) {
     this.persona = persona
@@ -41,7 +43,30 @@ export class Orchestrator {
     this.llmClient = new FallbackLLMClient(gemini, ollama, persona.id)
   }
 
-  async respond(
+  // 同一チャンネルの連投を直列化し、前の往復が履歴に保存されてから次を処理する
+  respond(
+    channelId: string,
+    userId: string,
+    userMessage: string,
+    guildId = "dm",
+    attachments: ChatAttachment[] = [],
+    searchableGuildIds: string[] = [],
+  ): Promise<string> {
+    const previous = this.channelQueues.get(channelId) ?? Promise.resolve()
+    const run = previous
+      .catch(() => undefined)
+      .then(() =>
+        this.respondInternal(channelId, userId, userMessage, guildId, attachments, searchableGuildIds),
+      )
+    const tail = run.catch(() => undefined)
+    this.channelQueues.set(channelId, tail)
+    void tail.then(() => {
+      if (this.channelQueues.get(channelId) === tail) this.channelQueues.delete(channelId)
+    })
+    return run
+  }
+
+  private async respondInternal(
     channelId: string,
     userId: string,
     userMessage: string,
@@ -66,7 +91,7 @@ export class Orchestrator {
         )
         if (chunks.length > 0) {
           const ragContext = chunks.join("\n\n")
-          systemPrompt += `\n---\n以下は参考情報です：\n${ragContext}`
+          systemPrompt += `\n---\n以下は参考情報（過去のDiscordログ等の断片）です。質問と直接関係する内容だけを根拠にし、断片にない事柄を推測で断定しないでください。根拠が不十分なときは「ログからははっきりわからない」と正直に伝えてください。\n${ragContext}`
         }
       } catch (error) {
         console.warn(
@@ -88,7 +113,7 @@ export class Orchestrator {
       : userMessage
     const messages = history.length > 0
       ? [
-          ...history.slice(-4),
+          ...history.slice(-HISTORY_PROMPT_LIMIT),
           { role: "user" as const, content: currentMessageContent, attachments },
         ]
       : [{ role: "user" as const, content: currentMessageContent, attachments }]
